@@ -50,6 +50,7 @@ namespace Elmah
     public class SqlErrorLog : ErrorLog
     {
         private readonly string _connectionString;
+        private readonly string _schemaName;
 
         private const int _maxAppNameLength = 60;
 
@@ -78,6 +79,9 @@ namespace Elmah
                 throw new ApplicationException("Connection string is missing for the SQL error log.");
 
             _connectionString = connectionString;
+
+            string schemaName = Mask.NullString((string)config["schemaName"]);
+            _schemaName = schemaName;
 
             //
             // Set the application name as this implementation provides
@@ -130,6 +134,11 @@ namespace Elmah
             get { return _connectionString; }
         }
 
+        public virtual string SchemaName
+        {
+            get { return _schemaName; }
+        }
+
         /// <summary>
         /// Logs an error to the database.
         /// </summary>
@@ -149,6 +158,7 @@ namespace Elmah
 
             using (SqlConnection connection = new SqlConnection(this.ConnectionString))
             using (SqlCommand command = Commands.LogError(
+                SchemaName,
                 id, this.ApplicationName, 
                 error.HostName, error.Type, error.Source, error.Message, error.User,
                 error.StatusCode, error.Time.ToUniversalTime(), errorXml))
@@ -174,7 +184,7 @@ namespace Elmah
                 throw new ArgumentOutOfRangeException("pageSize", pageSize, null);
 
             using (SqlConnection connection = new SqlConnection(this.ConnectionString))
-            using (SqlCommand command = Commands.GetErrorsXml(this.ApplicationName, pageIndex, pageSize))
+            using (SqlCommand command = Commands.GetErrorsXml(this.SchemaName, this.ApplicationName, pageIndex, pageSize))
             {
                 command.Connection = connection;
                 connection.Open();
@@ -265,7 +275,7 @@ namespace Elmah
             // and setup to call the stored procedure.
             //
 
-            SqlCommand command = Commands.GetErrorsXml(this.ApplicationName, pageIndex, pageSize);
+            SqlCommand command = Commands.GetErrorsXml(this.SchemaName, this.ApplicationName, pageIndex, pageSize);
             command.Connection = connection;
 
             //
@@ -392,7 +402,7 @@ namespace Elmah
             string errorXml;
 
             using (SqlConnection connection = new SqlConnection(this.ConnectionString))
-            using (SqlCommand command = Commands.GetErrorXml(this.ApplicationName, errorGuid))
+            using (SqlCommand command = Commands.GetErrorXml(this.SchemaName, this.ApplicationName, errorGuid))
             {
                 command.Connection = connection;
                 connection.Open();
@@ -410,7 +420,16 @@ namespace Elmah
         {
             private Commands() {}
 
+            private static string GetQualifiedName(string schemaName, string objectName)
+            {
+                if (string.IsNullOrEmpty(schemaName))
+                    return objectName;
+                else
+                    return $"[{schemaName}].[{objectName}]";
+            }
+
             public static SqlCommand LogError(
+                string schemaName,
                 Guid id,
                 string appName,
                 string hostName,
@@ -422,7 +441,7 @@ namespace Elmah
                 DateTime time,
                 string xml)
             {
-                SqlCommand command = new SqlCommand("ELMAH_LogError");
+                SqlCommand command = new SqlCommand(GetQualifiedName(schemaName, "ELMAH_LogError"));
                 command.CommandType = CommandType.StoredProcedure;
 
                 SqlParameterCollection parameters = command.Parameters;
@@ -432,18 +451,18 @@ namespace Elmah
                 parameters.Add("@Host", SqlDbType.NVarChar, 30).Value = hostName;
                 parameters.Add("@Type", SqlDbType.NVarChar, 100).Value = typeName;
                 parameters.Add("@Source", SqlDbType.NVarChar, 60).Value = source;
-                parameters.Add("@Message", SqlDbType.NVarChar, 500).Value = message;
+                parameters.Add("@Message", SqlDbType.NVarChar, -1).Value = message;
                 parameters.Add("@User", SqlDbType.NVarChar, 50).Value = user;
-                parameters.Add("@AllXml", SqlDbType.NText).Value = xml;
+                parameters.Add("@AllXml", SqlDbType.NVarChar, -1).Value = xml;
                 parameters.Add("@StatusCode", SqlDbType.Int).Value = statusCode;
                 parameters.Add("@TimeUtc", SqlDbType.DateTime).Value = time;
 
                 return command;
             }
 
-            public static SqlCommand GetErrorXml(string appName, Guid id)
+            public static SqlCommand GetErrorXml(string schemaName, string appName, Guid id)
             {
-                SqlCommand command = new SqlCommand("ELMAH_GetErrorXml");
+                SqlCommand command = new SqlCommand(GetQualifiedName(schemaName, "ELMAH_GetErrorXml"));
                 command.CommandType = CommandType.StoredProcedure;
 
                 SqlParameterCollection parameters = command.Parameters;
@@ -453,9 +472,9 @@ namespace Elmah
                 return command;
             }
 
-            public static SqlCommand GetErrorsXml(string appName, int pageIndex, int pageSize)
+            public static SqlCommand GetErrorsXml(string schemaName, string appName, int pageIndex, int pageSize)
             {
-                SqlCommand command = new SqlCommand("ELMAH_GetErrorsXml");
+                SqlCommand command = new SqlCommand(GetQualifiedName(schemaName, "ELMAH_GetErrorsXml"));
                 command.CommandType = CommandType.StoredProcedure;
 
                 SqlParameterCollection parameters = command.Parameters;
